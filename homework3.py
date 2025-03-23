@@ -56,14 +56,14 @@ class BagSubscriber(Node):
         # 初始化可视化参数  # 新增参数配置
         self.plot_config = {
             'point_cloud': {
-                'figsize': (24, 36),
+                'figsize': (36, 12),
                 'point_color': 'lime',
                 'bg_color': 'black',
                 'dpi': 100,
             },
             'grid_map': {
                 'cmap': plt.cm.binary,
-                'hit_threshold': 20,
+                'hit_threshold': 10,
                 'x_range': [-10, 50],
                 'y_range': [-10, 50],
                 'grid_color': 'k',
@@ -73,10 +73,10 @@ class BagSubscriber(Node):
         # 初始化matplotlib
         plt.ion()
         self.fig = plt.figure(figsize=self.plot_config['point_cloud']['figsize']) 
-        gs = self.fig.add_gridspec(nrows=1, ncols=2, width_ratios=[1, 2] ) # 点云图:栅格图 = 1:2
+        gs = self.fig.add_gridspec(nrows=1, ncols=2, width_ratios=[1, 1] ) # 点云图:栅格图 = 1:1
         # 创建子图
-        self.ax1 = self.fig.add_subplot(gs[0])  # 点云图占1/3宽度
-        self.ax2 = self.fig.add_subplot(gs[1])  # 栅格图占2/3宽度
+        self.ax1 = self.fig.add_subplot(gs[0]) 
+        self.ax2 = self.fig.add_subplot(gs[1])
         
         # 预生成网格边缘坐标
         self.x_edges = np.arange(self.plot_config['grid_map']['x_range'][0], self.plot_config['grid_map']['x_range'][1] + self.grid_size, 
@@ -85,11 +85,19 @@ class BagSubscriber(Node):
             self.plot_config['grid_map']['y_range'][1] + self.grid_size,self.grid_size)
 
                 # 绘制栅格
-        mesh = self.ax2.pcolormesh(
+        self.grid_data = None
+        self.mesh = self.ax2.pcolormesh(
             self.x_edges,
             self.y_edges,
             np.zeros((len(self.y_edges)-1, len(self.x_edges)-1),),
-            cmap=self.plot_config['grid_map']['cmap'],edgecolors='gray',  linewidth=0.01,    shading='flat',   )
+            cmap=self.plot_config['grid_map']['cmap'],
+            edgecolors='k',
+            linewidth=0.01,
+            shading='flat',
+            norm=mcolors.Normalize(
+                vmin=0,
+                vmax=self.plot_config['grid_map']['hit_threshold']
+            ) )
         # 配置栅格图显示
         self.ax2.set_xlim(self.plot_config['grid_map']['x_range'])
         self.ax2.set_ylim(self.plot_config['grid_map']['y_range'])
@@ -104,7 +112,7 @@ class BagSubscriber(Node):
         timestamp = scan_msg.header.stamp.sec + scan_msg.header.stamp.nanosec * 1e-9
         scan_data = {
             'timestamp': timestamp,
-            'ranges': np.array(scan_msg.ranges)
+            'ranges': np.array(scan_msg.ranges)*100
         }
         # print(np.array(scan_msg.ranges))
         # 注意：在实际使用时需要确保数据匹配，可能需要用更健壮的数据同步策略
@@ -117,6 +125,7 @@ class BagSubscriber(Node):
                 'ang.z': odom_msg.twist.twist.angular.z,
             }
         })
+        print("Receiving: ",timestamp,odom_msg.twist.twist.linear.x,odom_msg.twist.twist.linear.y,odom_msg.twist.twist.angular.z)
 
     def check_and_process(self):
         """检查队列中是否有数据，如果有则异步处理"""
@@ -128,10 +137,10 @@ class BagSubscriber(Node):
             # 将数据处理任务提交到线程池中
             self.pool.submit(self.lidar_to_world, data)
 
-
     def lidar_to_world(self, data_batch):
         """在后台线程中处理激光点转换"""
         world_points = []
+        print("Calculating: ",data_batch[0]['odom'])
         for data in data_batch:
             scan = data['scan']
             pose = data['odom']
@@ -141,7 +150,7 @@ class BagSubscriber(Node):
             x_lidar = ranges / self.params['unit'] * np.cos(angles)
             y_lidar = ranges / self.params['unit'] * np.sin(angles)
             theta = pose['ang.z']
-            print(x_lidar)
+            # print(x_lidar)
             rot_matrix = np.array([
                 [np.cos(theta), -np.sin(theta)],
                 [np.sin(theta),  np.cos(theta)]
@@ -177,8 +186,8 @@ class BagSubscriber(Node):
 
     def create_grid_map(self, points: np.array, grid_size=0.1):
         """生成带坐标信息的栅格地图"""
-        x_min, x_max = points[:,0].min(), points[:,0].max()
-        y_min, y_max = points[:,1].min(), points[:,1].max()
+        x_min, x_max = -10, 50
+        y_min, y_max = -10, 50
         
         x_edges = np.arange(x_min, x_max + grid_size, grid_size)
         y_edges = np.arange(y_min, y_max + grid_size, grid_size)
@@ -195,7 +204,7 @@ class BagSubscriber(Node):
 
         # ================= 点云图绘制 =================
         self.iter += self.world_points.shape[0]
-        print(self.iter,self.iter/361)
+        print("Ploting: ",self.iter,self.iter/361)
         self.ax1.scatter(
             self.world_points[:,0], 
             self.world_points[:,1],s=1,c=self.plot_config['point_cloud']['point_color'],edgecolors='none')
@@ -207,30 +216,14 @@ class BagSubscriber(Node):
         # 应用阈值处理
         grid_data = np.where(self.grid_map < self.plot_config['grid_map']['hit_threshold'], 0, self.grid_map)
         
-        # 创建颜色标准化器
-        norm = mcolors.Normalize(vmin=0, 
-                               vmax=self.plot_config['grid_map']['hit_threshold'])
-        
-        # 绘制栅格
-        mesh = self.ax2.pcolormesh(
-            self.x_edges,
-            self.y_edges,
-            grid_data,
-            cmap=self.plot_config['grid_map']['cmap'],norm=norm,edgecolors='gray',  # 临时使用醒目颜色调试
-        )
-        # 配置栅格图
-        self.ax2.set_xlim(self.plot_config['grid_map']['x_range'])
-        self.ax2.set_ylim(self.plot_config['grid_map']['y_range'])
-        self.ax2.set_title(f"Occupancy Grid Map (Threshold={self.plot_config['grid_map']['hit_threshold']})", 
-                          fontsize=12,
-                          pad=10)
-        self.ax2.set_xlabel("X Coordinate (meters)", 
-                           labelpad=8,
-                           fontsize=9)
-        self.ax2.set_ylabel("Y Coordinate (meters)", 
-                           labelpad=8,
-                           fontsize=9)
-        
+        if self.grid_data is None:
+            self.grid_data = grid_data.copy()
+        else:
+            # 根据需求选择合并策略，此处示例为取最大值
+            self.grid_data = np.maximum(self.grid_data, grid_data)
+
+        self.mesh.set_array(self.grid_data.ravel())
+
         # 动态刷新
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
