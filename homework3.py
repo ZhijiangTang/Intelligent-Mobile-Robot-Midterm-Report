@@ -106,6 +106,7 @@ class BagSubscriber(Node):
             'timestamp': timestamp,
             'ranges': np.array(scan_msg.ranges)
         }
+        # print(np.array(scan_msg.ranges))
         # 注意：在实际使用时需要确保数据匹配，可能需要用更健壮的数据同步策略
         self.data_queue.put({
             'scan': scan_data,
@@ -140,6 +141,7 @@ class BagSubscriber(Node):
             x_lidar = ranges / self.params['unit'] * np.cos(angles)
             y_lidar = ranges / self.params['unit'] * np.sin(angles)
             theta = pose['ang.z']
+            print(x_lidar)
             rot_matrix = np.array([
                 [np.cos(theta), -np.sin(theta)],
                 [np.sin(theta),  np.cos(theta)]
